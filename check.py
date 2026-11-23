@@ -8,7 +8,9 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 # ====================== 바꾸고 싶으면 여기만 ======================
 PRODUCT_URL = (
@@ -18,6 +20,7 @@ PRODUCT_URL = (
 )
 PRODUCT_NAME = "NCT WISH 'INTO THE WISH Our WISH' SCRUNCHIE"
 MEMBERS = ["RIKU", "YUSHI"]
+HEARTBEAT_MINUTES = 60   # 이 간격마다 "정상 작동 중" 무음 메시지 (0이면 끔)
 # =================================================================
 
 WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
@@ -73,8 +76,11 @@ def member_status(stock):
     return status
 
 
-def send_discord(text):
-    body = json.dumps({"content": text}).encode("utf-8")
+def send_discord(text, silent=False):
+    payload = {"content": text}
+    if silent:
+        payload["flags"] = 4096   # 폰이 울리지 않는 무음 메시지
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(WEBHOOK, data=body, headers={
         "Content-Type": "application/json",
         "User-Agent": "restock-alert/1.0",
@@ -138,6 +144,17 @@ def main():
             new_state[member] = bool(ok)
         if MANUAL_RUN:
             send_discord(f"✅ GitHub 재입고 알림 작동 확인\n{summary}\n{PRODUCT_URL}")
+            new_state["_last_heartbeat"] = int(time.time())
+
+    # 주기적으로 "정상 작동 중" 무음 메시지
+    if HEARTBEAT_MINUTES > 0:
+        now = int(time.time())
+        last = int(new_state.get("_last_heartbeat") or 0)
+        if now - last >= HEARTBEAT_MINUTES * 60 - 150:
+            kst = datetime.now(timezone(timedelta(hours=9))).strftime("%m/%d %H:%M")
+            line = f"⚠️ 오류 지속 중: {error}" if error else summary
+            send_discord(f"🟢 {kst} 작동 중 | {line}", silent=True)
+            new_state["_last_heartbeat"] = now
 
     if new_state != state:
         save_state(new_state)
